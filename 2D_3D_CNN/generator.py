@@ -8,23 +8,22 @@ VERSION BUILT TO HANDLE IMAGES WITH A CHANNEL LAST AXIS
 @author: fcalvet
 under GPLv3
 
-Adapted in March 2019 by A. Dudle for the multi-slice CNN
+Adapted in March 2019 by A. Dudle for the 2D & 3D CNN
 
 """
 
 import numpy as np
-import tensorflow.keras
+import keras
 import random
 from matplotlib import pyplot as plt
 import os
 import elasticdeform
 
-from multi_channel_image_augmentation import (random_transform, 
-    deform_grid, deform_pixel)
+from multi_channel_image_augmentation import random_transform, deform_grid, deform_pixel
 from read import yReadFunction
 
 
-class DataGenerator(tensorflow.keras.utils.Sequence):
+class DataGenerator(keras.utils.Sequence):
     """
     Generates data for Keras
     Based on keras.utils.Sequence for efficient and safe multiprocessing
@@ -41,6 +40,7 @@ class DataGenerator(tensorflow.keras.utils.Sequence):
                  balance=False, plotgenerator=0):
         'Initialization'
         self.batch_size = batch_size
+        self.list_IDs = list_IDs
         self.list_IDs_original = list_IDs
         self.shuffle = shuffle
         self.plotgenerator = plotgenerator
@@ -48,12 +48,9 @@ class DataGenerator(tensorflow.keras.utils.Sequence):
         self.plotedgenerator = 0  # counts the number of images saved
         self.list_IDs_temp = []
         self.balance = balance
-
-        self.list_IDs = self.make_list()
         self.maxindex = len(self.list_IDs)
-        self.list_IDs_original = self.make_list()
+
         self.on_epoch_end()
-        
 
     def __len__(self):
         'Denotes the number of batches per epoch'
@@ -65,8 +62,8 @@ class DataGenerator(tensorflow.keras.utils.Sequence):
     def __getitem__(self, index):
         """
         Generate one batch of data by:
-            generating a list of indexes which corresponds to a list 
-            of ID, use prepare_batch to prepare the batch
+            generating a list of indexes which corresponds to a list of ID, 
+            use prepare_batch to prepare the batch
         """
         'Generate indexes of the batch'
         temp = (index + 1) * self.batch_size
@@ -74,7 +71,6 @@ class DataGenerator(tensorflow.keras.utils.Sequence):
             indexes = self.indexes[index * self.batch_size:temp]
         else:
             indexes = self.indexes[index * self.batch_size:self.maxindex]
-
         'Find list of IDs'
         self.list_IDs_temp = [self.list_IDs[k] for k in indexes]
         X, Y = self.prepare_batch(self.list_IDs_temp)
@@ -83,8 +79,11 @@ class DataGenerator(tensorflow.keras.utils.Sequence):
 
     def on_epoch_end(self):
         """
-        Updates indexes and shuffle after each epoch
+        Updates indexes after each epoch
         """
+        if len(self.params["distance"]) > 2:
+            self.list_IDs = self.make_list()
+        
         if self.balance:
             self.list_IDs = self.class_balancing()
 
@@ -113,23 +112,36 @@ class DataGenerator(tensorflow.keras.utils.Sequence):
                 ID = ID.replace("'", '').split(", ")
                 ID[1] = int(ID[1])
                 ID = np.asarray(ID)
+                
             if len(self.params["distance"]) < 3:
                 x, seg = xReadFunction(ID, self.params, im_mask="both", 
                     data=self.params["data"])
             else : 
                 x, seg, ID[1] = xReadFunction(ID, self.params, 
                     im_mask="both", data=self.params["data"])
-
-            x, seg = self.imaugment(x, seg)
-            x = np.concatenate([x, seg], axis=-1)
+            
+            if self.params["only"] == "seg":
+                x = self.imaugment(seg)
+            elif self.params["only"] == "im":
+                x = self.imaugment(x)
+            else:
+                x, seg = self.imaugment(x, seg)
+                x = np.concatenate([x, seg], axis=-1)
+                
             y = yReadFunction(ID, self.params)
+
             X.append(x)
             Y.append(y)
 
         X = np.asarray(X)
         Y = np.asarray(Y)
-        
+        if len(self.params["distance"]) > 2:
+            dz = self.params["distance"][2]
+        else:
+            dz = 1
+        self.save_images(X[...,0:1], X[...,1:2], list_IDs, overlay=False)
         return X, Y
+
 
     def imaugment(self, X, Y=None):
         """
@@ -138,20 +150,19 @@ class DataGenerator(tensorflow.keras.utils.Sequence):
             elastic deformation
         """
         if self.params["augmentation"][0] == True:
-            X, Y = random_transform(X, Y, 
-                **self.params["random_deform"])
-                
+            X, Y = random_transform(X, Y, **self.params["random_deform"])
+            
         if self.params["augmentation"][1] == True:
             [X, Y] = elasticdeform.deform_random_grid([X, Y], 
-                axis=[(0, 1), (0, 1)],
+                axis=[(0, 1), (0, 1)], 
                 sigma=self.params["e_deform_g"]["sigma"],
                 points=self.params["e_deform_g"]["points"])
-            
+                
         if self.params["augmentation"][2] == True:
             r = np.random.normal(self.params["noise"]["mean"],
                 self.params["noise"]["std"], X.shape)
             X = X + r.reshape(X.shape)
-                
+
         if self.params["augmentation"][3]:
             g = 2 * self.params["gamma"]["range"][1]
             while ((g < self.params["gamma"]["range"][0]) | 
@@ -165,7 +176,6 @@ class DataGenerator(tensorflow.keras.utils.Sequence):
             else:
                 X = 2 * np.power(X / 2 + 0.5, 1 / g) - 1
         return X, Y
-
 
     def save_images(self, X, Y, list_IDs, predict=False, overlay=False, 
         epoch_number=None):
@@ -198,7 +208,7 @@ class DataGenerator(tensorflow.keras.utils.Sequence):
             if len(X[0].shape) == 3:
                 '''
                 Save augmented images for 2D (will save 10 slices from 
-                    different patients)
+                different patients)
                 '''
                 nbr_samples = len(X)
                 plt.figure(figsize=(6, 11), dpi=200)
@@ -213,7 +223,7 @@ class DataGenerator(tensorflow.keras.utils.Sequence):
                     else:
                         pltname = list_IDs[i][-27:]
                     if (not predict and (self.params["only"] == "both") 
-                        and overlay):
+                        and overlay:)
                         plt.imshow(np.squeeze(Y[i]), 
                             cmap=plt.cm.Purples, alpha=.1)
                     fz = 5  # Works best after saving
@@ -228,6 +238,7 @@ class DataGenerator(tensorflow.keras.utils.Sequence):
                 and len(Y[0].shape) == 3):
                 nbr_samples = len(X)
                 plt.figure(figsize=(6, 11), dpi=200)
+
                 for i in range(min(nbr_samples, 10)):
                     im = Y[i]
                     ax = plt.subplot(5, 2, i + 1)
@@ -273,9 +284,9 @@ class DataGenerator(tensorflow.keras.utils.Sequence):
                     ax.set_title(pltname, fontsize=fz)
                 plt.savefig(os.path.join(self.params["savefolder"],
                     str(self.params["data"]) + 
-                    str(self.params["augmentation"]) +genOrPred + "_" + 
-                    str(self.plotedgenerator) + "_ep" + 
-                    str(epoch_number) + '_im.png'))
+                    str(self.params["augmentation"]) +
+                    genOrPred + "_" + str(self.plotedgenerator) + "_ep" 
+                    + str(epoch_number) + '_im.png'))
                 plt.close()
             if (not predict and (self.params["only"] == "both") 
                 and len(Y[0].shape) == 4):
@@ -287,14 +298,15 @@ class DataGenerator(tensorflow.keras.utils.Sequence):
                         n_slice = mean_slice -dz + i
                         im = Yto_print[:, :, i, j]
                         ax = plt.subplot(5, 2, i + 1)
-                        plt.imshow(np.squeeze(im), cmap='gray', vmin=0, vmax=1)
+                        plt.imshow(np.squeeze(im), cmap='gray', vmin=0, 
+                            vmax=1)
                         plt.axis('off')
                         pltname = "slice " + str(n_slice)
                         fz = 5  # Works best after saving
                         ax.set_title(pltname, fontsize=fz)
                     plt.savefig(os.path.join(self.params["savefolder"],
                         str(self.params["data"]) + 
-                        str(self.params["augmentation"]) + genOrPred + 
+                        str(self.params["augmentation"]) +genOrPred + 
                         "_" + str(self.plotedgenerator) + "_ep" + 
                         str(epoch_number) +'_mask_' + str(j) + '.png'))
                     plt.close()
@@ -308,8 +320,16 @@ class DataGenerator(tensorflow.keras.utils.Sequence):
         """
         Repeat elements from smaller class until the class are balanced
         """
-        patient_list = self.list_IDs_original
-        for ID in self.list_IDs_original:
+        if len(self.params["distance"]) < 3:
+            patient_list = np.empty(shape=(0, 2))
+            for ID in self.list_IDs_original:
+                if self.params["partition"] == 'read':
+                    ID = ID.replace("]", '').replace("[", '')
+                    ID = ID.replace("'", '').split(", ")
+                    ID = np.asarray(ID)
+                    ID = ID.reshape((1, 2))
+                    ID[0, 1] = int(ID[0, 1])
+                patient_list = np.append(patient_list, ID, axis=0)
             labels = yReadFunction(patient_list, self.params)
             malignant = patient_list[labels == 1]
             tot_num = len(labels)
@@ -327,18 +347,46 @@ class DataGenerator(tensorflow.keras.utils.Sequence):
             patient_list = np.append(patient_list, malignant[r], 
                 axis=0)
             return patient_list
+        
+        else:
+            labels = yReadFunction(self.list_IDs, self.params)
+            malignant = self.list_IDs[labels == 1]
+            tot_num = len(labels)
+            mal_num = int(np.sum(labels))
+            imbal = ((tot_num - mal_num) / mal_num) - 1
+            if imbal >= 1:
+                r = np.floor(imbal).astype(int)
+                for j in range(r):
+                    new_patients = self.make_list()
+                    new_labels = yReadFunction(new_patients, 
+                        self.params)
+                    new_malignant = new_patients[new_labels == 1]
+                    self.list_IDs = np.append(self.list_IDs, 
+                        new_malignant, axis=0)
+                imbal = imbal - r
+            r = int(imbal * mal_num)
+            r = random.sample(range(mal_num), r)
+            new_patients = self.make_list()
+            new_labels = yReadFunction(new_patients, self.params)
+            new_malignant = new_patients[new_labels == 1]
+            self.list_IDs = np.append(self.list_IDs, 
+                new_malignant[r], axis=0)
+            new_labels = yReadFunction(self.list_IDs, self.params)
+            return self.list_IDs
             
             
     def make_list(self):
         """
         From partition, get minimum and maximum slice index
         """
-        patient_list = np.empty(shape=(0, 3))
+        patient_list = np.empty(shape=(0, 2))
         
         for ID in self.list_IDs_original:
             ID = ID.replace("]", '').replace("[", '')
             ID = ID.replace("'", '').split(" ")
             ID = np.asarray(ID)
-            patient_list = np.append(patient_list, [[ID[0], int(ID[1]), 
-            int(ID[-1])]], axis = 0)
+            temp = np.random.choice(ID[1:],1)
+            temp = int(temp)
+            patient_list = np.append(patient_list, [[ID[0], temp]], 
+                axis = 0)
         return patient_list

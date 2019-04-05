@@ -10,16 +10,15 @@ from find_center import (find_center, correct_center, correct_size,
 
 
 def xReadFunction(ID, params, im_mask="both", data=None):
-    """
+     """
     Read and crop MR image and segmentation mask
     """
-    
     'Read path of image file for the patient from a dataframe'
     source = params["source"]
     if data == "dataset_name"
         df = pd.read_csv(os.path.join(source, 'dataframe.csv'), 
             index_col=0, header=0)
-    path = df.loc[ID[0], 'Patient path']
+        path = df.loc[ID[0], 'Patient path']
     else: 
         raise ValueError("Dataset name missing")
     
@@ -53,64 +52,54 @@ def xReadFunction(ID, params, im_mask="both", data=None):
         img_array = sitk.GetArrayFromImage(img)
         seg_array = sitk.GetArrayFromImage(seg)
         
-        z_mean = int(float(ID[1]))
+        z_mean = int(ID[1])
+    
+    '2D CNN: 1 slice'    
+    if len(params["distance"]) == 2:
+        (dx, dy) = params["distance"]
         
+        'Select slice'
+        img_array = img_array[z_mean:z_mean + 1, :, :]
+        img_array = np.transpose(img_array, (2, 1, 0))
+        seg_array = seg_array[z_mean:z_mean + 1, :, :]
+        seg_array = np.transpose(seg_array, (2, 1, 0))
+        
+        'Zero padding if necessary'
+        img_array = correct_size(img_array, (dx, dy))
+        seg_array = correct_size(seg_array, (dx, dy))
 
-    (dx, dy, dz) = params["distance"]
-    img_array = np.transpose(img_array, (2, 1, 0))
-    seg_array = np.transpose(seg_array, (2, 1, 0))
-    
-    
-    if ID.shape[0] < 3:
+    '3D CNN: 2*dz slices'
+    elif len(params["distance"]) == 3:
+        (dx, dy, dz) = params["distance"]
+        img_array = np.transpose(img_array, (2, 1, 0))
+        seg_array = np.transpose(seg_array, (2, 1, 0))
+        
         'Zero padding if necessary'
         img_array, temp = correct_size3D(img_array, (dx,dy,dz), z_mean)
         seg_array, z_mean = correct_size3D(seg_array, (dx,dy,dz), z_mean)
-    
+        
         if temp!=z_mean:
-            raise ValueError("Slice number of image and segmentation not equal")
-    
-        'If minimum and maximum slices are not provided, crop to a fixed number of slices'
+            print("Slice number of image and segmentation not equal")
+        
+        'Select slices'
         img_array = img_array[:, :, z_mean-dz:z_mean+dz]
         seg_array = seg_array[:, :, z_mean-dz:z_mean+dz]
-    
-    elif ID.shape[0] == 3:
-        z_min = int(float(ID[1]))
-        z_max = int(float(ID[2]))
-        z_mean = int(np.rint((z_min + z_max)/2))
-        dz = int(np.ceil((z_max-z_min)/2))
-        
-        'Zero padding if necessary'
-        img_array, temp = correct_size3D(img_array, (dx,dy,dz), z_mean)
-        seg_array, z_mean = correct_size3D(seg_array, (dx,dy,dz), 
-            z_mean)
-    
-        if temp!=z_mean:
-            raise ValueError("Slice number of image and segmentation not equal")
-        
-        'Crop image between minimum and maximum slices'
-        img_array = img_array[:, :, z_min:z_max+1]
-        seg_array = seg_array[:, :, z_min:z_max+1]
-    
-    else:
-        raise ValueError("Slice not defined, ID: ", ID)
         
     x_seg, y_seg = find_center(seg_array)
 
     'Segmentation center'
     if params["centered"] == "seg":
         x, y = x_seg, y_seg
-    
     'Random crop center'
     else:
         x_max, y_max, z_max = img_array.shape
         x = int(x_max / 2) + random.randint(-int(x_max / 20), 
             int(x_max / 20))
-        y = int(y_max / 2) + random.randint(-int(y_max / 20), 
+        y = int(y_max / 2) + random.randint(-int(y_max / 20),  
             int(y_max / 20))
             
     'Correct crop center so that it contains the whole tumor'
     x, y = correct_center((x, y), seg_array, (dx, dy), (x_seg, y_seg))
-    
     'Cropping'
     img_array = img_array[x - dx:x + dx, y - dy:y + dy, :]
     seg_array = seg_array[x - dx:x + dx, y - dy:y + dy, :]
@@ -119,14 +108,12 @@ def xReadFunction(ID, params, im_mask="both", data=None):
         img_array = np.expand_dims(img_array, axis = 3)
         seg_array = np.expand_dims(seg_array, axis = 3)
         return img_array, seg_array, z_mean
-   
     else:
         return img_array, seg_array
 
 
-
 def yReadFunction(ID, params):
-    """
+     """
     Read image labels
     """
     source = params["source"]
@@ -139,7 +126,7 @@ def yReadFunction(ID, params):
             index_col=0, header=0)
     else: 
         raise ValueError("Dataset name missing")
-        
+
     if len(ID.shape) == 2:
         y = np.empty(0, dtype=int)
         for j in range(ID.shape[0]):
@@ -148,7 +135,6 @@ def yReadFunction(ID, params):
     else:
         y = df.loc[ID[0], 'Label']
     return y
-
 
 
 def ReadPartition(source, params, col=None):
@@ -161,24 +147,36 @@ def ReadPartition(source, params, col=None):
     distance = params["distance"]
 
     if spacing == "same":
-        df = pd.read_csv(os.path.join(source, 
-            'partitions_multi_same.csv'), index_col=0, header=0)
+        if data == 'Paris':
+            df = pd.read_csv(os.path.join(source, 
+                'partitions_2d_same.csv'), index_col=0, header=0)
     elif spacing == "original":
         df = pd.read_csv(os.path.join(source, 
-            'partitions__multi_original.csv'), index_col=0, header=0)
+            'partitions_2d_original.csv'), index_col=0, header=0)
     else:
         raise NameError("Partition missing")
 
     df.columns = df.columns.astype(int)
     
-    if col is None:
-        y = df.shape[1]
-        col = random.randint(0, y / 2 - 1)
-    partition = {}
-    a = df.loc[:, 2 * col]
-    partition["train"] = a.dropna()
-    a = df.loc[:, 2 * col + 1]
-    partition["validation"] = a.dropna()
-    return partition
+    if len(distance) == 2:
+        if col is None:
+            y = df.shape[1]
+            col = random.randint(0, y / 2 - 1)
+        partition = {}
+        a = df.loc[:, 2 * col]
+        partition["train"] = a.dropna()
+        a = df.loc[:, 2 * col + 1]
+        partition["validation"] = a.dropna()
+        return partition
         
-
+    elif len(distance) == 3:
+        if col is None:
+            y = df.shape[1]
+            col = random.randint(0, y / 4 - 1)
+        partition = {}
+        a = df.loc[:, 2 * col]
+        a.dropna()
+        partition["train"] = a.dropna()
+        a = df.loc[:, 2 * col + 1]
+        partition["validation"] = a.dropna()
+        return partition

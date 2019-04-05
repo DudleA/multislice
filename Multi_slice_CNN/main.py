@@ -14,13 +14,11 @@ from network import Multi_CNN
 from metrics import auc, conf
 
 
-
 params = {}
 params["source"] = sys.argv[1]
 params["savefolder"] = sys.argv[2]
 params['xReadFunction'] = xReadFunction
 params['yReadFunction'] = yReadFunction
-params['scalarsReadFunction'] = scalarsReadFunction
 
 # ---------------------------------------------------------------------------------
 'GENERAL TRAINING PARAMETERS'
@@ -106,7 +104,7 @@ else:
 
 # ---------------------------------------------------------------------------------
 'PARTITION'
-'Use existing partition: 'read', or randomly generated: None'
+'Use existing partition: read, or randomly generated: None'
 params["partition"] = 'read'
 'For existing partition, choose index'
 col = 0
