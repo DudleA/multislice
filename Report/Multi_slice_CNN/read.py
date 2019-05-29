@@ -15,14 +15,14 @@ def xReadFunction(ID, params, im_mask="both", data=None):
     """
     'Read path of image file for the patient from a dataframe'
     source = params["source"]
-    if data == "dataset_name"
+    if data == "dataset"
         df = pd.read_csv(os.path.join(source, 'dataframe.csv'), 
             index_col=0, header=0)
         path = df.loc[ID[0], 'Patient path']
     else: 
         raise ValueError("Dataset name missing")
     
-    'Read image and segmentation according to spacing and norm parameters'
+    'Read image and segmentation according to spacing & norm parameters'
     if params["spacing"] == "same":
         if params["norm"] == "slice":
             img = sitk.ReadImage(os.path.join(path, 
@@ -68,22 +68,40 @@ def xReadFunction(ID, params, im_mask="both", data=None):
         img_array = correct_size(img_array, (dx, dy))
         seg_array = correct_size(seg_array, (dx, dy))
 
-    '3D CNN: 2*dz slices'
+    
     elif len(params["distance"]) == 3:
         (dx, dy, dz) = params["distance"]
         img_array = np.transpose(img_array, (2, 1, 0))
         seg_array = np.transpose(seg_array, (2, 1, 0))
         
-        'Zero padding if necessary'
-        img_array, temp = correct_size3D(img_array, (dx,dy,dz), z_mean)
-        seg_array, z_mean = correct_size3D(seg_array, (dx,dy,dz), z_mean)
+        '3D CNN: 2*dz slices'
+        if ID.shape[0] < 3:
+            'Zero padding if necessary'
+            img_array, temp = correct_size3D(img_array, (dx,dy,dz), z_mean)
+            seg_array, z_mean = correct_size3D(seg_array, (dx,dy,dz), z_mean)
         
-        if temp!=z_mean:
-            print("Slice number of image and segmentation not equal")
+            if temp!=z_mean:
+                raise ValueError("Slice number of image and segmentation not equal")
+                
+            'Select slices'
+            img_array = img_array[:, :, z_mean-dz:z_mean+dz]
+            seg_array = seg_array[:, :, z_mean-dz:z_mean+dz]
         
-        'Select slices'
-        img_array = img_array[:, :, z_mean-dz:z_mean+dz]
-        seg_array = seg_array[:, :, z_mean-dz:z_mean+dz]
+        'Multi-slice CNN'
+        elif ID.shape[0] == 3:
+            z_min = int(float(ID[1]))
+            z_max = int(float(ID[2]))
+            
+            'Zero padding if necessary'
+            img_array = correct_size(img_array, (dx,dy))
+            seg_array = correct_size(seg_array, (dx,dy))
+            
+            'Select slices'
+            img_array = img_array[:, :, z_min:z_max+1]
+            seg_array = seg_array[:, :, z_min:z_max+1]
+        
+        else:
+            raise ValueError("Slice not defined, ID: ", ID)
         
     x_seg, y_seg = find_center(seg_array)
 
@@ -107,9 +125,8 @@ def xReadFunction(ID, params, im_mask="both", data=None):
     if len(params["distance"]) == 3:
         img_array = np.expand_dims(img_array, axis = 3)
         seg_array = np.expand_dims(seg_array, axis = 3)
-        return img_array, seg_array, z_mean
-    else:
-        return img_array, seg_array
+    return img_array, seg_array
+
 
 
 def yReadFunction(ID, params):
@@ -136,6 +153,22 @@ def yReadFunction(ID, params):
         y = df.loc[ID[0], 'Label']
     return y
 
+def scalarsReadFunction(ID, source, data=None):
+    """
+    Read age and gender
+    """
+    if data == 'dataset':
+        df = pd.read_csv(os.path.join(source, 'dataframe.csv'), 
+            index_col=0, header=0)
+        age = df.loc[ID[0], "Age"]
+        age = age * np.ones((shape[0], shape[1], shape[2], 1))
+        gender = df.loc[ID[0], "Gender"]
+        gender = gender * np.ones((shape[0], shape[1], shape[2], 1))
+        scalars = np.concatenate([age, gender], axis = 3)
+    else:
+        raise NameError("Dataset name unknown")
+    return scalars
+
 
 def ReadPartition(source, params, col=None):
     """
@@ -147,12 +180,31 @@ def ReadPartition(source, params, col=None):
     distance = params["distance"]
 
     if spacing == "same":
-        if data == 'Paris':
-            df = pd.read_csv(os.path.join(source, 
-                'partitions_2d_same.csv'), index_col=0, header=0)
+        if data == "dataset":
+            if len(distance) == 2:
+                df = pd.read_csv(os.path.join(source, 
+                    'partitions_2d_same.csv'), index_col=0, header=0)
+            elif len(distance) == 3:
+                df = pd.read_csv(os.path.join(source, 
+                    'partitions_3d_same.csv'), index_col=0, header=0)
+            else:
+                raise ValueError('Unexpected shape for params["distance"]')
+        else:
+            raise NameError("Dataset name unknown")
     elif spacing == "original":
-        df = pd.read_csv(os.path.join(source, 
-            'partitions_2d_original.csv'), index_col=0, header=0)
+        if data == "dataset":
+            if len(distance) == 2:
+                df = pd.read_csv(os.path.join(source, 
+                    'partitions_2d_original.csv'), index_col=0, 
+                    header=0)
+            elif len(distance) == 3:
+                df = pd.read_csv(os.path.join(source, 
+                    'partitions_3d_original.csv'), index_col=0, 
+                    header=0)
+            else:
+                raise ValueError('Unexpected shape for params["distance"]')
+        else:
+            raise NameError("Dataset name unknown")
     else:
         raise NameError("Partition missing")
 

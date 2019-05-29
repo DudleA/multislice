@@ -19,7 +19,7 @@ from matplotlib import pyplot as plt
 import os
 import elasticdeform
 
-from multi_channel_image_augmentation import random_transform, deform_grid, deform_pixel
+from image_augmentation import random_transform, deform_grid, deform_pixel
 from read import yReadFunction
 
 

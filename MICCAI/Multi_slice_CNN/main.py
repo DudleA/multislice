@@ -100,7 +100,7 @@ if augmentation == True:
     params["gamma"]["std"] = 0.2
 
 else:
-    params["augmentation"] = [0, 0, 0, 0, 0]
+    params["augmentation"] = [0, 0, 0, 0]
 
 # ---------------------------------------------------------------------------------
 'PARTITION'
